@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Assessments · Admin</title>
+  <link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+  <div class="container">
+    <h1>Assessments</h1>
+    <p class="subtitle">All completed English assessments</p>
+
+    <div id="loading" class="muted"><span class="spinner"></span>Loading…</div>
+    <div id="error" class="error-banner hidden"></div>
+    <div id="empty" class="muted hidden">No assessments yet.</div>
+
+    <div class="card hidden" id="table-card">
+      <table>
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Date</th>
+            <th>Band</th>
+            <th>Details</th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <script src="/js/admin.js"></script>
+</body>
+</html>

@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>English Speaking Assessment</title>
+  <link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+  <div class="container">
+    <h1>English Speaking Assessment</h1>
+    <p class="subtitle">Spoken English evaluation for IT candidates · ~20 minutes</p>
+
+    <div class="steps">
+      <span class="step" id="step-intro">Intro</span>
+      <span class="step" id="step-q1">Question 1 · Technical</span>
+      <span class="step" id="step-q2">Question 2 · General</span>
+      <span class="step" id="step-finish">Finish</span>
+    </div>
+
+    <div id="error-banner" class="error-banner hidden"></div>
+
+    <!-- INTRO -->
+    <section id="screen-intro" class="card">
+      <h2>How it works</h2>
+      <p>You will answer <strong>two questions out loud, in English</strong>:</p>
+      <div class="instructions">
+        <p><strong>Question 1 — technical.</strong> A work scenario (a bug, an incident,
+        architecture, a trade-off). You will have up to <strong>5 minutes to prepare</strong>:
+        think about what to say, make short notes if you like. You can also simply talk
+        about the last feature you built, in technical language.</p>
+        <p style="margin-top:8px"><strong>Question 2 — general.</strong> A simple everyday
+        question. No preparation needed.</p>
+        <p style="margin-top:8px">Each answer is limited to <strong>7 minutes</strong>.
+        You will see a reminder when 5 minutes have passed.</p>
+        <p style="margin-top:8px">Your speech is transcribed automatically — please use
+        Chrome or Edge and allow microphone access. If voice input is not supported on
+        your device, you can type your answer instead.</p>
+      </div>
+      <div class="controls">
+        <button id="btn-start">Start assessment</button>
+      </div>
+    </section>
+
+    <!-- QUESTION (reused for Q1 and Q2) -->
+    <section id="screen-question" class="card hidden">
+      <h2 id="q-title"></h2>
+      <div class="question-text" id="q-text"></div>
+      <div class="instructions" id="q-instructions"></div>
+
+      <!-- Prep phase (Q1 only) -->
+      <div id="prep-phase">
+        <div class="controls">
+          <button id="btn-begin-answer">I'm ready — start answering</button>
+          <span class="muted">Preparation time: <span class="timer" id="prep-timer">5:00</span></span>
+        </div>
+      </div>
+
+      <!-- Answer phase -->
+      <div id="answer-phase" class="hidden">
+        <div class="controls">
+          <span class="rec-indicator" id="rec-indicator">Recording</span>
+          <span class="timer" id="answer-timer">0:00</span>
+          <span class="muted">/ 7:00 max</span>
+          <button id="btn-finish-answer" class="secondary">Finish this answer</button>
+        </div>
+        <div id="voice-area">
+          <div class="transcript-box" id="transcript-box">Your transcribed speech will appear here…</div>
+          <p class="muted" style="margin-top: 8px">
+            <a href="#" id="link-text-fallback">Voice input not working? Type your answer instead</a>
+          </p>
+        </div>
+        <div id="text-area" class="hidden">
+          <p class="muted" style="margin: 12px 0 6px">Voice input is not available — type your answer in English:</p>
+          <textarea id="text-answer" placeholder="Type your answer here…"></textarea>
+        </div>
+      </div>
+    </section>
+
+    <!-- FINISH -->
+    <section id="screen-finish" class="card hidden">
+      <h2>Almost done</h2>
+      <p class="muted">Both answers are recorded. Enter your name to submit the assessment.</p>
+      <div style="margin: 18px 0">
+        <input type="text" id="candidate-name" placeholder="First and last name" autocomplete="name" />
+      </div>
+      <div class="controls">
+        <button id="btn-submit">Завершить / Submit</button>
+        <span id="submit-status" class="muted hidden"><span class="spinner"></span>Evaluating your answers…</span>
+      </div>
+    </section>
+  </div>
+
+  <!-- 5-minute popup -->
+  <div id="modal-5min" class="modal-overlay hidden">
+    <div class="modal">
+      <h3>5 minutes have passed</h3>
+      <p>You have up to 2 more minutes for this answer. Start wrapping up your thought.</p>
+      <button id="btn-modal-ok">Continue</button>
+    </div>
+  </div>
+
+  <script src="/js/assessment.js"></script>
+</body>
+</html>

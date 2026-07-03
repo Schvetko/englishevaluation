@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Assessment Result</title>
+  <link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+  <div class="container">
+    <div id="loading" class="muted"><span class="spinner"></span>Loading result…</div>
+    <div id="error" class="error-banner hidden"></div>
+
+    <div id="result" class="hidden">
+      <h1 id="r-name"></h1>
+      <p class="subtitle" id="r-meta"></p>
+
+      <div class="card">
+        <h2>Overall band</h2>
+        <span class="band" id="r-band"></span>
+        <p style="margin-top: 14px" id="r-summary"></p>
+      </div>
+
+      <div class="card">
+        <h2>Scores</h2>
+        <div class="score-grid" id="r-scores"></div>
+        <div class="score-item">
+          <div class="label">Everyday vs technical gap</div>
+          <div class="value" id="r-gap"></div>
+          <div class="comment" id="r-gap-comment"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Observations &amp; reformulations</h2>
+        <div id="r-observations"></div>
+      </div>
+
+      <div class="card">
+        <h2>Transcripts</h2>
+        <details>
+          <summary>Question 1 · Technical</summary>
+          <div class="question-text" id="r-q1-question"></div>
+          <div class="transcript-box" id="r-q1-transcript"></div>
+        </details>
+        <details>
+          <summary>Question 2 · General</summary>
+          <div class="question-text" id="r-q2-question"></div>
+          <div class="transcript-box" id="r-q2-transcript"></div>
+        </details>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/results.js"></script>
+</body>
+</html>
