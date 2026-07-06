@@ -1,0 +1,119 @@
+import Link from "next/link";
+import { cookies } from "next/headers";
+import { listAssessments } from "@/lib/db";
+import { ADMIN_COOKIE, isValidAdminCookie } from "@/lib/auth";
+
+export const dynamic = "force-dynamic";
+
+const BAND_LABELS: Record<string, string> = {
+  independent: "Independent",
+  supported: "Supported",
+  needs_support: "Needs support",
+};
+
+function formatDate(iso: string): string {
+  return new Date(iso).toLocaleString("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+export default async function AdminPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ error?: string }>;
+}) {
+  const cookieStore = await cookies();
+  const { error } = await searchParams;
+  const authed = isValidAdminCookie(cookieStore.get(ADMIN_COOKIE)?.value);
+
+  if (!authed) {
+    return (
+      <main className="container">
+        <h1>Admin</h1>
+        <p className="subtitle">Hiring team access</p>
+        <div className="card" style={{ maxWidth: 420 }}>
+          <form method="POST" action="/api/admin/login">
+            <label className="form-label" htmlFor="password">
+              Password
+            </label>
+            <input
+              id="password"
+              name="password"
+              type="password"
+              className="field"
+              autoFocus
+            />
+            {error === "1" && (
+              <p className="error-text small">Wrong password.</p>
+            )}
+            {error === "unconfigured" && (
+              <p className="error-text small">
+                ADMIN_PASSWORD is not configured on the server.
+              </p>
+            )}
+            <div className="actions">
+              <button type="submit" className="btn">
+                Sign in
+              </button>
+            </div>
+          </form>
+        </div>
+      </main>
+    );
+  }
+
+  const assessments = await listAssessments();
+
+  return (
+    <main className="container wide">
+      <div className="header-bar">
+        <h1>Assessments</h1>
+        <span className="muted small">{assessments.length} total</span>
+      </div>
+      <div className="card">
+        {assessments.length === 0 ? (
+          <p className="muted">
+            No assessments yet. Send candidates to{" "}
+            <Link href="/assessment">/assessment</Link>.
+          </p>
+        ) : (
+          <table className="admin-table">
+            <thead>
+              <tr>
+                <th>Candidate</th>
+                <th>Date</th>
+                <th>Band</th>
+                <th>Video</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {assessments.map((a) => (
+                <tr key={a.id}>
+                  <td>{a.candidateName}</td>
+                  <td className="muted">{formatDate(a.createdAt)}</td>
+                  <td>
+                    <span className={`badge ${a.evaluation.overall_band}`}>
+                      {BAND_LABELS[a.evaluation.overall_band] ??
+                        a.evaluation.overall_band}
+                    </span>
+                  </td>
+                  <td className="muted small">
+                    {a.videoUrls.length > 0 ? `${a.videoUrls.length} file(s)` : "—"}
+                  </td>
+                  <td>
+                    <Link href={`/results/${a.id}`}>Details →</Link>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </main>
+  );
+}
