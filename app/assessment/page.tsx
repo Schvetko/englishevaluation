@@ -16,7 +16,6 @@ type SubPhase = "prep" | "recording" | "review";
 interface AnswerState {
   transcript: string;
   durationSeconds: number;
-  mode: "voice" | "text";
   videoBlob: Blob | null;
 }
 
@@ -40,9 +39,10 @@ function formatTime(totalSeconds: number): string {
 const EMPTY_ANSWER: AnswerState = {
   transcript: "",
   durationSeconds: 0,
-  mode: "voice",
   videoBlob: null,
 };
+
+const MIN_TRANSCRIPT_CHARS = 40;
 
 export default function AssessmentPage() {
   const router = useRouter();
@@ -58,14 +58,12 @@ export default function AssessmentPage() {
   ]);
 
   const [speechSupported, setSpeechSupported] = useState(true);
-  const [manualMode, setManualMode] = useState(false);
-  const [manualText, setManualText] = useState("");
+  const [micBlocked, setMicBlocked] = useState(false);
   const [liveTranscript, setLiveTranscript] = useState("");
   const [interim, setInterim] = useState("");
   const [elapsed, setElapsed] = useState(0);
   const [showTimeWarning, setShowTimeWarning] = useState(false);
   const [warningShown, setWarningShown] = useState(false);
-  const [reviewText, setReviewText] = useState("");
   const [cameraError, setCameraError] = useState(false);
 
   const [firstName, setFirstName] = useState("");
@@ -75,7 +73,9 @@ export default function AssessmentPage() {
 
   const recognitionRef = useRef<AnySpeechRecognition | null>(null);
   const recognitionActiveRef = useRef(false);
+  const restartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const finalTranscriptRef = useRef("");
+  const interimRef = useRef("");
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<BlobPart[]>([]);
@@ -99,9 +99,26 @@ export default function AssessmentPage() {
         : String(Date.now());
   }, []);
 
-  const cleanupMedia = useCallback(() => {
+  const foldInterimIntoFinal = useCallback(() => {
+    // Chrome sometimes ends recognition without finalising the last
+    // hypothesis — keep it so no speech is lost.
+    const pending = interimRef.current.trim();
+    if (pending) {
+      finalTranscriptRef.current +=
+        (finalTranscriptRef.current ? " " : "") + pending;
+      interimRef.current = "";
+      setLiveTranscript(finalTranscriptRef.current);
+      setInterim("");
+    }
+  }, []);
+
+  const stopRecognition = useCallback(() => {
+    recognitionActiveRef.current = false;
+    if (restartTimerRef.current) {
+      clearTimeout(restartTimerRef.current);
+      restartTimerRef.current = null;
+    }
     if (recognitionRef.current) {
-      recognitionActiveRef.current = false;
       try {
         recognitionRef.current.stop();
       } catch {
@@ -109,6 +126,83 @@ export default function AssessmentPage() {
       }
       recognitionRef.current = null;
     }
+    foldInterimIntoFinal();
+  }, [foldInterimIntoFinal]);
+
+  const startRecognition = useCallback(() => {
+    const Ctor = getSpeechRecognitionCtor();
+    if (!Ctor) return;
+
+    const spawn = () => {
+      if (!recognitionActiveRef.current) return;
+      const recognition = new Ctor();
+      recognition.lang = "en-US";
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.maxAlternatives = 1;
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      recognition.onresult = (event: any) => {
+        let interimText = "";
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const result = event.results[i];
+          if (result.isFinal) {
+            const text = result[0].transcript.trim();
+            if (text) {
+              finalTranscriptRef.current +=
+                (finalTranscriptRef.current ? " " : "") + text;
+            }
+          } else {
+            interimText += result[0].transcript;
+          }
+        }
+        interimRef.current = interimText;
+        setLiveTranscript(finalTranscriptRef.current);
+        setInterim(interimText);
+      };
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      recognition.onerror = (event: any) => {
+        if (
+          event.error === "not-allowed" ||
+          event.error === "service-not-allowed"
+        ) {
+          recognitionActiveRef.current = false;
+          setMicBlocked(true);
+        }
+        // Everything else ("no-speech", "network", "aborted") falls
+        // through to onend, where we restart.
+      };
+
+      recognition.onend = () => {
+        foldInterimIntoFinal();
+        recognitionRef.current = null;
+        // Chrome stops recognition after pauses in speech. Restart with a
+        // short delay — an immediate start() can throw and would kill the
+        // whole restart chain.
+        if (recognitionActiveRef.current) {
+          restartTimerRef.current = setTimeout(spawn, 250);
+        }
+      };
+
+      recognitionRef.current = recognition;
+      try {
+        recognition.start();
+      } catch {
+        // start() can throw if the previous instance is still winding
+        // down — retry shortly instead of giving up.
+        recognitionRef.current = null;
+        if (recognitionActiveRef.current) {
+          restartTimerRef.current = setTimeout(spawn, 500);
+        }
+      }
+    };
+
+    recognitionActiveRef.current = true;
+    spawn();
+  }, [foldInterimIntoFinal]);
+
+  const cleanupTimers = useCallback(() => {
     if (timerRef.current) {
       clearInterval(timerRef.current);
       timerRef.current = null;
@@ -117,88 +211,31 @@ export default function AssessmentPage() {
 
   useEffect(() => {
     return () => {
-      cleanupMedia();
+      stopRecognition();
+      cleanupTimers();
       mediaStreamRef.current?.getTracks().forEach((t) => t.stop());
     };
-  }, [cleanupMedia]);
-
-  const startRecognition = useCallback(() => {
-    const Ctor = getSpeechRecognitionCtor();
-    if (!Ctor) {
-      setManualMode(true);
-      return;
-    }
-    const recognition = new Ctor();
-    recognition.lang = "en-US";
-    recognition.continuous = true;
-    recognition.interimResults = true;
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    recognition.onresult = (event: any) => {
-      let interimText = "";
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const result = event.results[i];
-        if (result.isFinal) {
-          finalTranscriptRef.current +=
-            (finalTranscriptRef.current ? " " : "") +
-            result[0].transcript.trim();
-        } else {
-          interimText += result[0].transcript;
-        }
-      }
-      setLiveTranscript(finalTranscriptRef.current);
-      setInterim(interimText);
-    };
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    recognition.onerror = (event: any) => {
-      if (event.error === "not-allowed" || event.error === "service-not-allowed") {
-        recognitionActiveRef.current = false;
-        setManualMode(true);
-      }
-      // "no-speech" and "network" are recovered by onend restart.
-    };
-    recognition.onend = () => {
-      // Chrome stops recognition after pauses; restart while answering.
-      if (recognitionActiveRef.current && recognitionRef.current) {
-        try {
-          recognitionRef.current.start();
-        } catch {
-          /* start() can throw if called too quickly; next onend retries */
-        }
-      }
-    };
-
-    recognitionRef.current = recognition;
-    recognitionActiveRef.current = true;
-    try {
-      recognition.start();
-    } catch {
-      setManualMode(true);
-    }
-  }, []);
+  }, [stopRecognition, cleanupTimers]);
 
   const stopAnswer = useCallback(() => {
     if (stoppingRef.current) return;
     stoppingRef.current = true;
 
-    cleanupMedia();
+    stopRecognition();
+    cleanupTimers();
 
     const finishReview = (videoBlob: Blob | null) => {
       const idx = questionIndex;
-      const transcript = manualMode
-        ? manualText.trim()
-        : finalTranscriptRef.current.trim();
+      const transcript = finalTranscriptRef.current.trim();
       setAnswers((prev) => {
         const next = [...prev] as [AnswerState, AnswerState];
         next[idx] = {
           transcript,
           durationSeconds: elapsedRef.current,
-          mode: manualMode ? "text" : "voice",
           videoBlob,
         };
         return next;
       });
-      setReviewText(transcript);
       setSubPhase("review");
       stoppingRef.current = false;
     };
@@ -220,7 +257,7 @@ export default function AssessmentPage() {
       mediaStreamRef.current = null;
       finishReview(null);
     }
-  }, [cleanupMedia, manualMode, manualText, questionIndex]);
+  }, [stopRecognition, cleanupTimers, questionIndex]);
 
   const stopAnswerRef = useRef(stopAnswer);
   useEffect(() => {
@@ -229,18 +266,19 @@ export default function AssessmentPage() {
 
   const startAnswer = useCallback(async () => {
     finalTranscriptRef.current = "";
+    interimRef.current = "";
     setLiveTranscript("");
     setInterim("");
-    setManualText("");
     setElapsed(0);
     elapsedRef.current = 0;
     setWarningShown(false);
     setShowTimeWarning(false);
     setCameraError(false);
+    setMicBlocked(false);
     chunksRef.current = [];
 
-    // Camera + mic for the video recording (best-effort; assessment
-    // continues without video if the candidate declines).
+    // Camera + mic for the video recording (best-effort; the assessment
+    // continues without video if the camera is unavailable).
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { width: { ideal: 640 }, height: { ideal: 480 } },
@@ -250,13 +288,11 @@ export default function AssessmentPage() {
       if (videoPreviewRef.current) {
         videoPreviewRef.current.srcObject = stream;
       }
-      const mimeType = MediaRecorder.isTypeSupported(
-        "video/webm;codecs=vp8,opus",
-      )
-        ? "video/webm;codecs=vp8,opus"
-        : "video/webm";
+      const preferredMime = "video/webm;codecs=vp8,opus";
       const recorder = new MediaRecorder(stream, {
-        mimeType: MediaRecorder.isTypeSupported(mimeType) ? mimeType : undefined,
+        mimeType: MediaRecorder.isTypeSupported(preferredMime)
+          ? preferredMime
+          : undefined,
         videoBitsPerSecond: 600_000,
         audioBitsPerSecond: 64_000,
       });
@@ -269,11 +305,11 @@ export default function AssessmentPage() {
       setCameraError(true);
     }
 
-    if (!manualMode && speechSupported) {
-      startRecognition();
-    }
-
     setSubPhase("recording");
+
+    // Give the recorder a moment to settle before recognition grabs the
+    // microphone as a second consumer.
+    setTimeout(() => startRecognition(), 400);
 
     timerRef.current = setInterval(() => {
       elapsedRef.current += 1;
@@ -286,7 +322,7 @@ export default function AssessmentPage() {
         stopAnswerRef.current();
       }
     }, 1000);
-  }, [manualMode, speechSupported, startRecognition]);
+  }, [startRecognition]);
 
   useEffect(() => {
     // Attach the live stream to the preview element once it renders.
@@ -299,35 +335,23 @@ export default function AssessmentPage() {
     }
   }, [subPhase]);
 
-  const switchToManual = useCallback(() => {
-    if (recognitionRef.current) {
-      recognitionActiveRef.current = false;
-      try {
-        recognitionRef.current.stop();
-      } catch {
-        /* noop */
-      }
-      recognitionRef.current = null;
-    }
-    setManualText(finalTranscriptRef.current);
-    setManualMode(true);
-  }, []);
-
-  const confirmAnswer = useCallback(() => {
-    const idx = questionIndex;
+  const retryAnswer = useCallback(() => {
     setAnswers((prev) => {
       const next = [...prev] as [AnswerState, AnswerState];
-      next[idx] = { ...next[idx], transcript: reviewText.trim() };
+      next[questionIndex] = { ...EMPTY_ANSWER };
       return next;
     });
-    if (idx === 0) {
+    setSubPhase("prep");
+  }, [questionIndex]);
+
+  const confirmAnswer = useCallback(() => {
+    if (questionIndex === 0) {
       setQuestionIndex(1);
       setSubPhase("prep");
-      setManualMode(!speechSupported);
     } else {
       setPhase("name");
     }
-  }, [questionIndex, reviewText, speechSupported]);
+  }, [questionIndex]);
 
   const submit = useCallback(async () => {
     if (!questions) return;
@@ -365,8 +389,8 @@ export default function AssessmentPage() {
           transcript2: answers[1].transcript,
           duration1Seconds: answers[0].durationSeconds,
           duration2Seconds: answers[1].durationSeconds,
-          answerMode1: answers[0].mode,
-          answerMode2: answers[1].mode,
+          answerMode1: "voice",
+          answerMode2: "voice",
           videoUrls,
         }),
       });
@@ -389,9 +413,32 @@ export default function AssessmentPage() {
     );
   }
 
+  // Voice is mandatory — block unsupported browsers up front.
+  if (!speechSupported) {
+    return (
+      <main className="container">
+        <h1>English Assessment</h1>
+        <div className="card">
+          <h2>This browser is not supported</h2>
+          <p>
+            The assessment requires spoken answers, and your browser does not
+            support speech recognition.
+          </p>
+          <p>
+            Please open this page in <strong>Google Chrome, Microsoft Edge or
+            Safari on a desktop computer</strong> and try again.
+          </p>
+        </div>
+      </main>
+    );
+  }
+
   const isTechnical = questionIndex === 0;
   const currentQuestion = questions[questionIndex];
+  const currentAnswer = answers[questionIndex];
   const remaining = ANSWER_LIMIT_SECONDS - elapsed;
+  const transcriptTooShort =
+    currentAnswer.transcript.length < MIN_TRANSCRIPT_CHARS;
 
   return (
     <main className="container">
@@ -421,24 +468,12 @@ export default function AssessmentPage() {
               </li>
               <li>
                 Please allow <strong>microphone and camera</strong> access when
-                the browser asks.
+                the browser asks, use a quiet room, and speak clearly at a
+                normal pace.
               </li>
             </ul>
-            {!speechSupported && (
-              <p className="small" style={{ color: "var(--amber)" }}>
-                Your browser does not support speech recognition — you will
-                type your answers instead. For the voice experience, use
-                desktop Chrome, Edge or Safari.
-              </p>
-            )}
             <div className="actions">
-              <button
-                className="btn"
-                onClick={() => {
-                  setManualMode(!speechSupported);
-                  setPhase("question");
-                }}
-              >
+              <button className="btn" onClick={() => setPhase("question")}>
                 Begin
               </button>
             </div>
@@ -482,30 +517,14 @@ export default function AssessmentPage() {
                 )}
                 <p className="muted small">
                   When you press <strong>Start answering</strong>, recording
-                  begins. You will have up to 7 minutes; a reminder appears at
-                  5 minutes.
+                  begins. Speak in English, out loud. You will have up to 7
+                  minutes; a reminder appears at 5 minutes.
                 </p>
                 <div className="actions">
                   <button className="btn" onClick={startAnswer}>
                     Start answering
                   </button>
-                  {speechSupported && (
-                    <button
-                      className="btn secondary"
-                      onClick={() => setManualMode((m) => !m)}
-                    >
-                      {manualMode
-                        ? "Use voice instead"
-                        : "Type my answer instead"}
-                    </button>
-                  )}
                 </div>
-                {manualMode && speechSupported && (
-                  <p className="muted small" style={{ marginTop: 10 }}>
-                    Typing mode is on — you will type your answer while the
-                    timer runs.
-                  </p>
-                )}
               </>
             )}
 
@@ -545,46 +564,29 @@ export default function AssessmentPage() {
                     recording.
                   </p>
                 )}
-
-                {manualMode ? (
-                  <>
-                    <label className="form-label" htmlFor="manual-answer">
-                      Type your answer in English:
-                    </label>
-                    <textarea
-                      id="manual-answer"
-                      className="field"
-                      value={manualText}
-                      onChange={(e) => setManualText(e.target.value)}
-                      placeholder="Write your answer here…"
-                    />
-                  </>
-                ) : (
-                  <>
-                    <p className="muted small" style={{ marginBottom: 6 }}>
-                      Speak in English — live transcript:
-                    </p>
-                    <div className="transcript-box">
-                      {liveTranscript}
-                      {interim && <span className="muted"> {interim}</span>}
-                      {!liveTranscript && !interim && (
-                        <span className="muted">Listening…</span>
-                      )}
-                    </div>
-                    <p className="muted small" style={{ marginTop: 8 }}>
-                      Recognition not working?{" "}
-                      <a
-                        href="#"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          switchToManual();
-                        }}
-                      >
-                        Switch to typing
-                      </a>
-                    </p>
-                  </>
+                {micBlocked && (
+                  <p className="small error-text">
+                    Microphone access is blocked, so your speech cannot be
+                    recognised. Allow microphone access in the browser
+                    (usually the icon in the address bar), then press{" "}
+                    <strong>Finish this answer</strong> and record again.
+                  </p>
                 )}
+
+                <p className="muted small" style={{ marginBottom: 6 }}>
+                  Speak in English — live transcript:
+                </p>
+                <div className="transcript-box">
+                  {liveTranscript}
+                  {interim && <span className="muted"> {interim}</span>}
+                  {!liveTranscript && !interim && (
+                    <span className="muted">Listening…</span>
+                  )}
+                </div>
+                <p className="muted small" style={{ marginTop: 8 }}>
+                  If the transcript is not appearing while you speak, check
+                  that your microphone is working and allowed for this site.
+                </p>
 
                 <div className="actions">
                   <button className="btn danger" onClick={stopAnswer}>
@@ -596,24 +598,69 @@ export default function AssessmentPage() {
 
             {subPhase === "review" && (
               <>
-                <p className="muted small">
-                  Answer recorded ({formatTime(answers[questionIndex].durationSeconds)}).
-                  Review the transcript below — you can fix obvious
-                  transcription mistakes, but please don&apos;t rewrite your
-                  answer.
-                </p>
-                <textarea
-                  className="field"
-                  value={reviewText}
-                  onChange={(e) => setReviewText(e.target.value)}
-                />
-                <div className="actions">
-                  <button className="btn" onClick={confirmAnswer}>
-                    {questionIndex === 0
-                      ? "Continue to question 2"
-                      : "Continue"}
-                  </button>
-                </div>
+                {transcriptTooShort ? (
+                  <>
+                    <p className="error-text">
+                      We could not capture your speech
+                      {currentAnswer.transcript
+                        ? " — only a small fragment was recognised."
+                        : "."}
+                    </p>
+                    <div className="card inner">
+                      <p style={{ marginTop: 0 }}>Please check:</p>
+                      <ul className="clean" style={{ marginBottom: 0 }}>
+                        <li>
+                          the microphone is plugged in and allowed for this
+                          site (icon in the address bar);
+                        </li>
+                        <li>you are using desktop Chrome, Edge or Safari;</li>
+                        <li>
+                          you speak clearly, at a normal volume, close to the
+                          microphone.
+                        </li>
+                      </ul>
+                    </div>
+                    {currentAnswer.transcript && (
+                      <div className="transcript-box" style={{ marginTop: 12 }}>
+                        {currentAnswer.transcript}
+                      </div>
+                    )}
+                    <div className="actions">
+                      <button className="btn" onClick={retryAnswer}>
+                        Record this answer again
+                      </button>
+                      {currentAnswer.transcript.length > 0 && (
+                        <button
+                          className="btn secondary"
+                          onClick={confirmAnswer}
+                        >
+                          Continue anyway
+                        </button>
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <p className="muted small">
+                      Answer recorded (
+                      {formatTime(currentAnswer.durationSeconds)}). Here is
+                      what we captured:
+                    </p>
+                    <div className="transcript-box">
+                      {currentAnswer.transcript}
+                    </div>
+                    <div className="actions">
+                      <button className="btn" onClick={confirmAnswer}>
+                        {questionIndex === 0
+                          ? "Continue to question 2"
+                          : "Continue"}
+                      </button>
+                      <button className="btn secondary" onClick={retryAnswer}>
+                        Record again
+                      </button>
+                    </div>
+                  </>
+                )}
               </>
             )}
           </div>

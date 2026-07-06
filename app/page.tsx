@@ -17,9 +17,8 @@ export default function HomePage() {
             one technical scenario and one everyday question.
           </li>
           <li>
-            Your speech is transcribed automatically and your video is
-            recorded. If your browser does not support speech recognition, you
-            can type your answer instead.
+            Answers are spoken only — your speech is transcribed automatically
+            and your video is recorded.
           </li>
           <li>
             Each answer is limited to <strong>7 minutes</strong>. You will see
