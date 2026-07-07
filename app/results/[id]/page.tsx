@@ -1,6 +1,8 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { cookies } from "next/headers";
+import { notFound, redirect } from "next/navigation";
 import { getAssessment } from "@/lib/db";
+import { ADMIN_COOKIE, isValidAdminCookie } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -31,6 +33,12 @@ export default async function ResultPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  // Results are for the hiring team only — candidates never see them.
+  const cookieStore = await cookies();
+  if (!isValidAdminCookie(cookieStore.get(ADMIN_COOKIE)?.value)) {
+    redirect("/admin");
+  }
+
   const { id } = await params;
   const record = await getAssessment(id);
   if (!record) notFound();

@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 import { upload } from "@vercel/blob/client";
 import {
   ANSWER_LIMIT_SECONDS,
@@ -10,7 +9,7 @@ import {
   TECH_SCENARIOS,
 } from "@/lib/questions";
 
-type Phase = "intro" | "question" | "name" | "submitting";
+type Phase = "intro" | "question" | "name" | "submitting" | "done";
 type SubPhase = "prep" | "recording" | "review";
 
 interface AnswerState {
@@ -45,8 +44,6 @@ const EMPTY_ANSWER: AnswerState = {
 const MIN_TRANSCRIPT_CHARS = 40;
 
 export default function AssessmentPage() {
-  const router = useRouter();
-
   const [phase, setPhase] = useState<Phase>("intro");
   const [questionIndex, setQuestionIndex] = useState<0 | 1>(0);
   const [subPhase, setSubPhase] = useState<SubPhase>("prep");
@@ -398,12 +395,12 @@ export default function AssessmentPage() {
       if (!response.ok || !data.id) {
         throw new Error(data.error || "Submission failed");
       }
-      router.push(`/results/${data.id}`);
+      setPhase("done");
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : "Submission failed");
       setPhase("name");
     }
-  }, [answers, firstName, lastName, questions, router]);
+  }, [answers, firstName, lastName, questions]);
 
   if (!questions) {
     return (
@@ -723,6 +720,16 @@ export default function AssessmentPage() {
             )}
           </div>
         </>
+      )}
+
+      {phase === "done" && (
+        <div className="card" style={{ textAlign: "center", padding: 40 }}>
+          <h1 style={{ marginBottom: 12 }}>Thank you!</h1>
+          <p className="muted" style={{ margin: 0 }}>
+            Your assessment has been submitted. The hiring team will review it
+            and get back to you. You can close this page now.
+          </p>
+        </div>
       )}
 
       {showTimeWarning && (
