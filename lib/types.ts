@@ -3,20 +3,27 @@ export interface ScoredCriterion {
   comment: string;
 }
 
+export interface GrammarExample {
+  original: string;
+  correction: string;
+}
+
+export interface GrammarAssessment extends ScoredCriterion {
+  examples: GrammarExample[];
+}
+
 export interface Evaluation {
   comprehension: ScoredCriterion;
   fluency: ScoredCriterion;
+  grammar: GrammarAssessment;
   technical_vocabulary: ScoredCriterion;
+  spontaneous_followup: ScoredCriterion | null;
   everyday_technical_gap: {
     gap: "none" | "moderate" | "significant";
     comment: string;
   };
   overall_band: "independent" | "supported" | "needs_support";
   observations: string[];
-  reformulation_example: {
-    original: string;
-    improved: string;
-  };
 }
 
 export interface AssessmentRecord {
@@ -29,8 +36,9 @@ export interface AssessmentRecord {
   transcript2: string;
   duration1Seconds: number;
   duration2Seconds: number;
-  answerMode1: "voice" | "text";
-  answerMode2: "voice" | "text";
+  followupQuestion: string;
+  followupTranscript: string;
+  followupDurationSeconds: number;
   videoUrls: string[];
   evaluation: Evaluation;
 }

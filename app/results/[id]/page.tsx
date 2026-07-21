@@ -44,6 +44,7 @@ export default async function ResultPage({
   if (!record) notFound();
 
   const e = record.evaluation;
+  const hasFollowup = Boolean(record.followupQuestion);
 
   return (
     <main className="container">
@@ -74,12 +75,46 @@ export default async function ResultPage({
         <p className="muted small">{e.fluency.comment}</p>
 
         <div className="score-row">
+          <span className="score-value">{e.grammar.score}/5</span>
+          <span className="score-label">Grammar</span>
+        </div>
+        <p className="muted small" style={{ marginBottom: e.grammar.examples.length ? 8 : undefined }}>
+          {e.grammar.comment}
+        </p>
+        {e.grammar.examples.length > 0 && (
+          <div style={{ marginBottom: 4 }}>
+            {e.grammar.examples.map((ex, i) => (
+              <div key={i} style={{ marginBottom: 8 }}>
+                <blockquote className="reform">“{ex.original}”</blockquote>
+                <blockquote className="reform improved">
+                  “{ex.correction}”
+                </blockquote>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div className="score-row">
           <span className="score-value">{e.technical_vocabulary.score}/5</span>
           <span className="score-label">
             Technical vocabulary <span className="muted">(question 1)</span>
           </span>
         </div>
         <p className="muted small">{e.technical_vocabulary.comment}</p>
+
+        <div className="score-row">
+          <span className="score-value">
+            {e.spontaneous_followup ? `${e.spontaneous_followup.score}/5` : "—"}
+          </span>
+          <span className="score-label">
+            Spontaneous response <span className="muted">(unscripted follow-up)</span>
+          </span>
+        </div>
+        <p className="muted small">
+          {e.spontaneous_followup
+            ? e.spontaneous_followup.comment
+            : "No follow-up question was asked in this session."}
+        </p>
 
         <div className="score-row">
           <span className="score-value" style={{ fontSize: "1rem" }}>
@@ -95,23 +130,11 @@ export default async function ResultPage({
 
       <div className="card">
         <h2>Observations</h2>
-        <ul className="clean">
+        <ul className="clean" style={{ marginBottom: 0 }}>
           {e.observations.map((obs, i) => (
             <li key={i}>{obs}</li>
           ))}
         </ul>
-        {(e.reformulation_example.original ||
-          e.reformulation_example.improved) && (
-          <>
-            <h2 style={{ marginTop: 20 }}>Example reformulation</h2>
-            <blockquote className="reform">
-              “{e.reformulation_example.original}”
-            </blockquote>
-            <blockquote className="reform improved">
-              “{e.reformulation_example.improved}”
-            </blockquote>
-          </>
-        )}
       </div>
 
       {record.videoUrls.length > 0 && (
@@ -121,7 +144,7 @@ export default async function ResultPage({
             {record.videoUrls.map((url, i) => (
               <li key={url}>
                 <a href={url} target="_blank" rel="noopener noreferrer">
-                  Answer {i + 1} video
+                  Video {i + 1}
                 </a>
               </li>
             ))}
@@ -132,14 +155,27 @@ export default async function ResultPage({
       <div className="card">
         <h2>Transcripts</h2>
         <p className="small" style={{ marginBottom: 4 }}>
-          <strong>Q1 (technical{record.answerMode1 === "text" ? ", typed" : ""}):</strong>{" "}
+          <strong>Q1 (technical):</strong>{" "}
           <span className="muted">{record.question1}</span>
         </p>
         <div className="transcript-box" style={{ marginBottom: 18 }}>
           {record.transcript1 || "(empty)"}
         </div>
+
+        {hasFollowup && (
+          <>
+            <p className="small" style={{ marginBottom: 4 }}>
+              <strong>Unscripted follow-up:</strong>{" "}
+              <span className="muted">{record.followupQuestion}</span>
+            </p>
+            <div className="transcript-box" style={{ marginBottom: 18 }}>
+              {record.followupTranscript || "(empty)"}
+            </div>
+          </>
+        )}
+
         <p className="small" style={{ marginBottom: 4 }}>
-          <strong>Q2 (everyday{record.answerMode2 === "text" ? ", typed" : ""}):</strong>{" "}
+          <strong>Q2 (everyday):</strong>{" "}
           <span className="muted">{record.question2}</span>
         </p>
         <div className="transcript-box">{record.transcript2 || "(empty)"}</div>

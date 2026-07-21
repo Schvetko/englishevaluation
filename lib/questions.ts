@@ -66,3 +66,7 @@ export const EVERYDAY_QUESTIONS: string[] = [
 
 export const ANSWER_LIMIT_SECONDS = 7 * 60;
 export const SOFT_WARNING_SECONDS = 5 * 60;
+
+// The follow-up question is answered with no preparation time, so it gets
+// a much shorter window than the two main answers.
+export const FOLLOWUP_LIMIT_SECONDS = 2 * 60;

@@ -5,12 +5,14 @@ import { upload } from "@vercel/blob/client";
 import {
   ANSWER_LIMIT_SECONDS,
   EVERYDAY_QUESTIONS,
+  FOLLOWUP_LIMIT_SECONDS,
   SOFT_WARNING_SECONDS,
   TECH_SCENARIOS,
 } from "@/lib/questions";
 
-type Phase = "intro" | "question" | "name" | "submitting" | "done";
-type SubPhase = "prep" | "recording" | "review";
+type Slot = "q1" | "followup" | "q2";
+type Phase = "intro" | "flow" | "name" | "submitting" | "done";
+type SubPhase = "prep" | "loading" | "recording" | "review";
 
 interface AnswerState {
   transcript: string;
@@ -41,18 +43,30 @@ const EMPTY_ANSWER: AnswerState = {
   videoBlob: null,
 };
 
-const MIN_TRANSCRIPT_CHARS = 40;
+const MIN_TRANSCRIPT_CHARS: Record<Slot, number> = {
+  q1: 40,
+  followup: 20,
+  q2: 40,
+};
+
+const TIME_LIMITS: Record<Slot, number> = {
+  q1: ANSWER_LIMIT_SECONDS,
+  followup: FOLLOWUP_LIMIT_SECONDS,
+  q2: ANSWER_LIMIT_SECONDS,
+};
 
 export default function AssessmentPage() {
   const [phase, setPhase] = useState<Phase>("intro");
-  const [questionIndex, setQuestionIndex] = useState<0 | 1>(0);
+  const [activeSlot, setActiveSlot] = useState<Slot>("q1");
   const [subPhase, setSubPhase] = useState<SubPhase>("prep");
 
   const [questions, setQuestions] = useState<[string, string] | null>(null);
-  const [answers, setAnswers] = useState<[AnswerState, AnswerState]>([
-    { ...EMPTY_ANSWER },
-    { ...EMPTY_ANSWER },
-  ]);
+  const [followupQuestion, setFollowupQuestion] = useState("");
+  const [answers, setAnswers] = useState<Record<Slot, AnswerState>>({
+    q1: { ...EMPTY_ANSWER },
+    followup: { ...EMPTY_ANSWER },
+    q2: { ...EMPTY_ANSWER },
+  });
 
   const [speechSupported, setSpeechSupported] = useState(true);
   const [micBlocked, setMicBlocked] = useState(false);
@@ -79,6 +93,7 @@ export default function AssessmentPage() {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const elapsedRef = useRef(0);
   const stoppingRef = useRef(false);
+  const activeSlotRef = useRef<Slot>("q1");
   const videoPreviewRef = useRef<HTMLVideoElement | null>(null);
   const sessionIdRef = useRef<string>("");
 
@@ -214,6 +229,8 @@ export default function AssessmentPage() {
     };
   }, [stopRecognition, cleanupTimers]);
 
+  const stopAnswerRef = useRef<() => void>(() => {});
+
   const stopAnswer = useCallback(() => {
     if (stoppingRef.current) return;
     stoppingRef.current = true;
@@ -221,18 +238,18 @@ export default function AssessmentPage() {
     stopRecognition();
     cleanupTimers();
 
+    const slot = activeSlotRef.current;
+
     const finishReview = (videoBlob: Blob | null) => {
-      const idx = questionIndex;
       const transcript = finalTranscriptRef.current.trim();
-      setAnswers((prev) => {
-        const next = [...prev] as [AnswerState, AnswerState];
-        next[idx] = {
+      setAnswers((prev) => ({
+        ...prev,
+        [slot]: {
           transcript,
           durationSeconds: elapsedRef.current,
           videoBlob,
-        };
-        return next;
-      });
+        },
+      }));
       setSubPhase("review");
       stoppingRef.current = false;
     };
@@ -254,14 +271,14 @@ export default function AssessmentPage() {
       mediaStreamRef.current = null;
       finishReview(null);
     }
-  }, [stopRecognition, cleanupTimers, questionIndex]);
+  }, [stopRecognition, cleanupTimers]);
 
-  const stopAnswerRef = useRef(stopAnswer);
   useEffect(() => {
     stopAnswerRef.current = stopAnswer;
   }, [stopAnswer]);
 
   const startAnswer = useCallback(async () => {
+    const slot = activeSlotRef.current;
     finalTranscriptRef.current = "";
     interimRef.current = "";
     setLiveTranscript("");
@@ -308,14 +325,15 @@ export default function AssessmentPage() {
     // microphone as a second consumer.
     setTimeout(() => startRecognition(), 400);
 
+    const limit = TIME_LIMITS[slot];
     timerRef.current = setInterval(() => {
       elapsedRef.current += 1;
       setElapsed(elapsedRef.current);
-      if (elapsedRef.current === SOFT_WARNING_SECONDS) {
+      if (slot !== "followup" && elapsedRef.current === SOFT_WARNING_SECONDS) {
         setShowTimeWarning(true);
         setWarningShown(true);
       }
-      if (elapsedRef.current >= ANSWER_LIMIT_SECONDS) {
+      if (elapsedRef.current >= limit) {
         stopAnswerRef.current();
       }
     }, 1000);
@@ -333,37 +351,81 @@ export default function AssessmentPage() {
   }, [subPhase]);
 
   const retryAnswer = useCallback(() => {
-    setAnswers((prev) => {
-      const next = [...prev] as [AnswerState, AnswerState];
-      next[questionIndex] = { ...EMPTY_ANSWER };
-      return next;
-    });
+    const slot = activeSlotRef.current;
+    setAnswers((prev) => ({ ...prev, [slot]: { ...EMPTY_ANSWER } }));
+    // Always back to "prep" — for the follow-up slot this reuses the
+    // already-generated question rather than asking the model again.
     setSubPhase("prep");
-  }, [questionIndex]);
+  }, []);
+
+  const goToSlot = useCallback((slot: Slot) => {
+    activeSlotRef.current = slot;
+    setActiveSlot(slot);
+    setSubPhase(slot === "followup" ? "loading" : "prep");
+  }, []);
+
+  const requestFollowup = useCallback(async () => {
+    try {
+      const response = await fetch("/api/followup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          question: questions?.[0] ?? "",
+          transcript: answers.q1.transcript,
+        }),
+      });
+      const data = (await response.json()) as {
+        question?: string;
+        error?: string;
+      };
+      if (!response.ok || !data.question) {
+        throw new Error(data.error || "Follow-up generation failed");
+      }
+      setFollowupQuestion(data.question);
+      setSubPhase("prep");
+    } catch (err) {
+      // Follow-up is a bonus signal — never block the assessment on it.
+      console.error("Follow-up generation failed, skipping:", err);
+      goToSlot("q2");
+    }
+  }, [questions, answers, goToSlot]);
 
   const confirmAnswer = useCallback(() => {
-    if (questionIndex === 0) {
-      setQuestionIndex(1);
-      setSubPhase("prep");
+    if (activeSlot === "q1") {
+      goToSlot("followup");
+    } else if (activeSlot === "followup") {
+      goToSlot("q2");
     } else {
       setPhase("name");
     }
-  }, [questionIndex]);
+  }, [activeSlot, goToSlot]);
+
+  useEffect(() => {
+    if (
+      phase === "flow" &&
+      activeSlot === "followup" &&
+      subPhase === "loading"
+    ) {
+      requestFollowup();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, activeSlot, subPhase]);
 
   const submit = useCallback(async () => {
     if (!questions) return;
     setSubmitError("");
     setPhase("submitting");
 
+    const slotsWithVideo: Slot[] = ["q1", "followup", "q2"];
     const videoUrls: string[] = [];
     try {
-      for (let i = 0; i < 2; i++) {
-        const blob = answers[i].videoBlob;
+      for (const slot of slotsWithVideo) {
+        const blob = answers[slot].videoBlob;
         if (!blob) continue;
-        setSubmitStatus(`Uploading video ${i + 1} of 2…`);
+        setSubmitStatus("Uploading video…");
         try {
           const result = await upload(
-            `videos/${sessionIdRef.current}-q${i + 1}.webm`,
+            `videos/${sessionIdRef.current}-${slot}.webm`,
             blob,
             { access: "public", handleUploadUrl: "/api/video" },
           );
@@ -382,12 +444,13 @@ export default function AssessmentPage() {
           candidateName: `${firstName.trim()} ${lastName.trim()}`.trim(),
           question1: questions[0],
           question2: questions[1],
-          transcript1: answers[0].transcript,
-          transcript2: answers[1].transcript,
-          duration1Seconds: answers[0].durationSeconds,
-          duration2Seconds: answers[1].durationSeconds,
-          answerMode1: "voice",
-          answerMode2: "voice",
+          transcript1: answers.q1.transcript,
+          transcript2: answers.q2.transcript,
+          duration1Seconds: answers.q1.durationSeconds,
+          duration2Seconds: answers.q2.durationSeconds,
+          followupQuestion: followupQuestion || undefined,
+          followupTranscript: answers.followup.transcript || undefined,
+          followupDurationSeconds: answers.followup.durationSeconds,
           videoUrls,
         }),
       });
@@ -400,7 +463,7 @@ export default function AssessmentPage() {
       setSubmitError(err instanceof Error ? err.message : "Submission failed");
       setPhase("name");
     }
-  }, [answers, firstName, lastName, questions]);
+  }, [answers, firstName, lastName, questions, followupQuestion]);
 
   if (!questions) {
     return (
@@ -430,12 +493,24 @@ export default function AssessmentPage() {
     );
   }
 
-  const isTechnical = questionIndex === 0;
-  const currentQuestion = questions[questionIndex];
-  const currentAnswer = answers[questionIndex];
-  const remaining = ANSWER_LIMIT_SECONDS - elapsed;
+  const currentQuestion =
+    activeSlot === "q1"
+      ? questions[0]
+      : activeSlot === "q2"
+        ? questions[1]
+        : followupQuestion;
+  const currentAnswer = answers[activeSlot];
+  const limit = TIME_LIMITS[activeSlot];
+  const remaining = limit - elapsed;
   const transcriptTooShort =
-    currentAnswer.transcript.length < MIN_TRANSCRIPT_CHARS;
+    currentAnswer.transcript.length < MIN_TRANSCRIPT_CHARS[activeSlot];
+
+  const stepLabel =
+    activeSlot === "q1"
+      ? "Question 1 of 2 · Technical scenario"
+      : activeSlot === "followup"
+        ? "Unscripted follow-up"
+        : "Question 2 of 2 · Everyday question";
 
   return (
     <main className="container">
@@ -456,12 +531,15 @@ export default function AssessmentPage() {
                 <strong>Question 2</strong> is an everyday question.
               </li>
               <li>
-                For each question you can take a few minutes to prepare before
-                you start speaking.
+                Right after question 1, you will get one short{" "}
+                <strong>follow-up question</strong> based on your own answer —
+                that one has <strong>no preparation time</strong>, so just
+                answer naturally.
               </li>
               <li>
-                Each answer is limited to <strong>7 minutes</strong>; a
-                reminder appears after 5 minutes.
+                For questions 1 and 2 you can take a few minutes to prepare
+                before you start speaking. Each of those answers is limited to{" "}
+                <strong>7 minutes</strong>, with a reminder after 5 minutes.
               </li>
               <li>
                 Please allow <strong>microphone and camera</strong> access when
@@ -470,7 +548,13 @@ export default function AssessmentPage() {
               </li>
             </ul>
             <div className="actions">
-              <button className="btn" onClick={() => setPhase("question")}>
+              <button
+                className="btn"
+                onClick={() => {
+                  goToSlot("q1");
+                  setPhase("flow");
+                }}
+              >
                 Begin
               </button>
             </div>
@@ -478,18 +562,22 @@ export default function AssessmentPage() {
         </>
       )}
 
-      {phase === "question" && (
+      {phase === "flow" && (
         <>
-          <div className="step-indicator">
-            Question {questionIndex + 1} of 2 ·{" "}
-            {isTechnical ? "Technical scenario" : "Everyday question"}
-          </div>
+          <div className="step-indicator">{stepLabel}</div>
           <div className="card">
-            <h2>{currentQuestion}</h2>
-
-            {subPhase === "prep" && (
+            {subPhase === "loading" ? (
               <>
-                {isTechnical ? (
+                <h2>Preparing your follow-up question…</h2>
+                <p className="muted">One moment.</p>
+              </>
+            ) : (
+              <h2>{currentQuestion}</h2>
+            )}
+
+            {subPhase === "prep" && activeSlot !== "followup" && (
+              <>
+                {activeSlot === "q1" ? (
                   <div className="card inner">
                     <p style={{ marginTop: 0 }}>
                       <strong>Take about 5 minutes to prepare.</strong> Read
@@ -525,6 +613,24 @@ export default function AssessmentPage() {
               </>
             )}
 
+            {subPhase === "prep" && activeSlot === "followup" && (
+              <>
+                <div className="card inner">
+                  <p style={{ margin: 0 }}>
+                    This is a quick, unscripted follow-up about what you just
+                    said. There is <strong>no preparation time</strong> —
+                    answer right away, as you would on a real call. You will
+                    have up to <strong>2 minutes</strong>.
+                  </p>
+                </div>
+                <div className="actions">
+                  <button className="btn" onClick={startAnswer}>
+                    Start answering
+                  </button>
+                </div>
+              </>
+            )}
+
             {subPhase === "recording" && (
               <>
                 <div
@@ -535,16 +641,19 @@ export default function AssessmentPage() {
                     <span className="rec-dot" />
                     <span
                       className={`timer ${
-                        remaining <= 60
+                        remaining <= 30
                           ? "over"
-                          : warningShown
+                          : activeSlot !== "followup" && warningShown
                             ? "warning"
                             : ""
                       }`}
                     >
                       {formatTime(elapsed)}
                     </span>
-                    <span className="muted small"> / 7:00</span>
+                    <span className="muted small">
+                      {" "}
+                      / {formatTime(limit)}
+                    </span>
                   </div>
                   <video
                     ref={videoPreviewRef}
@@ -648,9 +757,11 @@ export default function AssessmentPage() {
                     </div>
                     <div className="actions">
                       <button className="btn" onClick={confirmAnswer}>
-                        {questionIndex === 0
-                          ? "Continue to question 2"
-                          : "Continue"}
+                        {activeSlot === "q1"
+                          ? "Continue to follow-up"
+                          : activeSlot === "followup"
+                            ? "Continue to question 2"
+                            : "Continue"}
                       </button>
                       <button className="btn secondary" onClick={retryAnswer}>
                         Record again
