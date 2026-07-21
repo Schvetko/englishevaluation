@@ -55,6 +55,11 @@ const TIME_LIMITS: Record<Slot, number> = {
   q2: ANSWER_LIMIT_SECONDS,
 };
 
+// The follow-up is a listening-comprehension check, not a reading one — it
+// is spoken aloud and never shown as text. One replay is allowed, mirroring
+// asking a real person to repeat themselves once.
+const MAX_FOLLOWUP_PLAYS = 2;
+
 export default function AssessmentPage() {
   const [phase, setPhase] = useState<Phase>("intro");
   const [activeSlot, setActiveSlot] = useState<Slot>("q1");
@@ -69,6 +74,9 @@ export default function AssessmentPage() {
   });
 
   const [speechSupported, setSpeechSupported] = useState(true);
+  const [ttsSupported, setTtsSupported] = useState(true);
+  const [followupPlayCount, setFollowupPlayCount] = useState(0);
+  const [followupSpeaking, setFollowupSpeaking] = useState(false);
   const [micBlocked, setMicBlocked] = useState(false);
   const [liveTranscript, setLiveTranscript] = useState("");
   const [interim, setInterim] = useState("");
@@ -105,6 +113,9 @@ export default function AssessmentPage() {
       EVERYDAY_QUESTIONS[Math.floor(Math.random() * EVERYDAY_QUESTIONS.length)];
     setQuestions([tech.prompt, everyday]);
     setSpeechSupported(Boolean(getSpeechRecognitionCtor()));
+    setTtsSupported(
+      typeof window !== "undefined" && "speechSynthesis" in window,
+    );
     sessionIdRef.current =
       typeof crypto !== "undefined" && "randomUUID" in crypto
         ? crypto.randomUUID()
@@ -221,11 +232,29 @@ export default function AssessmentPage() {
     }
   }, []);
 
+  const playFollowupQuestion = useCallback(() => {
+    if (typeof window === "undefined" || !window.speechSynthesis) return;
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(followupQuestion);
+    utterance.lang = "en-US";
+    utterance.rate = 0.95;
+    utterance.onstart = () => setFollowupSpeaking(true);
+    utterance.onend = () => {
+      setFollowupSpeaking(false);
+      setFollowupPlayCount((c) => c + 1);
+    };
+    utterance.onerror = () => setFollowupSpeaking(false);
+    window.speechSynthesis.speak(utterance);
+  }, [followupQuestion]);
+
   useEffect(() => {
     return () => {
       stopRecognition();
       cleanupTimers();
       mediaStreamRef.current?.getTracks().forEach((t) => t.stop());
+      if (typeof window !== "undefined" && window.speechSynthesis) {
+        window.speechSynthesis.cancel();
+      }
     };
   }, [stopRecognition, cleanupTimers]);
 
@@ -353,6 +382,10 @@ export default function AssessmentPage() {
   const retryAnswer = useCallback(() => {
     const slot = activeSlotRef.current;
     setAnswers((prev) => ({ ...prev, [slot]: { ...EMPTY_ANSWER } }));
+    if (slot === "followup") {
+      // Give a fresh set of listens for the retry attempt.
+      setFollowupPlayCount(0);
+    }
     // Always back to "prep" — for the follow-up slot this reuses the
     // already-generated question rather than asking the model again.
     setSubPhase("prep");
@@ -361,6 +394,9 @@ export default function AssessmentPage() {
   const goToSlot = useCallback((slot: Slot) => {
     activeSlotRef.current = slot;
     setActiveSlot(slot);
+    if (slot === "followup") {
+      setFollowupPlayCount(0);
+    }
     setSubPhase(slot === "followup" ? "loading" : "prep");
   }, []);
 
@@ -532,8 +568,9 @@ export default function AssessmentPage() {
               </li>
               <li>
                 Right after question 1, you will get one short{" "}
-                <strong>follow-up question</strong> based on your own answer —
-                that one has <strong>no preparation time</strong>, so just
+                <strong>follow-up question spoken out loud</strong> (not shown
+                as text) based on your own answer — that one has{" "}
+                <strong>no preparation time</strong>, so just listen and
                 answer naturally.
               </li>
               <li>
@@ -543,8 +580,9 @@ export default function AssessmentPage() {
               </li>
               <li>
                 Please allow <strong>microphone and camera</strong> access when
-                the browser asks, use a quiet room, and speak clearly at a
-                normal pace.
+                the browser asks, use a quiet room, turn your{" "}
+                <strong>volume on</strong> for the follow-up question, and
+                speak clearly at a normal pace.
               </li>
             </ul>
             <div className="actions">
@@ -571,6 +609,8 @@ export default function AssessmentPage() {
                 <h2>Preparing your follow-up question…</h2>
                 <p className="muted">One moment.</p>
               </>
+            ) : activeSlot === "followup" ? (
+              <h2>Follow-up question</h2>
             ) : (
               <h2>{currentQuestion}</h2>
             )}
@@ -615,19 +655,74 @@ export default function AssessmentPage() {
 
             {subPhase === "prep" && activeSlot === "followup" && (
               <>
-                <div className="card inner">
-                  <p style={{ margin: 0 }}>
-                    This is a quick, unscripted follow-up about what you just
-                    said. There is <strong>no preparation time</strong> —
-                    answer right away, as you would on a real call. You will
-                    have up to <strong>2 minutes</strong>.
-                  </p>
-                </div>
-                <div className="actions">
-                  <button className="btn" onClick={startAnswer}>
-                    Start answering
-                  </button>
-                </div>
+                {ttsSupported ? (
+                  <>
+                    <div className="card inner">
+                      <p style={{ margin: 0 }}>
+                        You will <strong>hear</strong> one short follow-up
+                        question about what you just said — it is not shown
+                        as text, so listen carefully. There is{" "}
+                        <strong>no preparation time</strong>: answer right
+                        away, as you would on a real call. You can replay it{" "}
+                        <strong>once</strong> if you need to. You will have up
+                        to <strong>2 minutes</strong> to answer.
+                      </p>
+                    </div>
+                    <div className="actions">
+                      {followupPlayCount === 0 ? (
+                        <button
+                          className="btn"
+                          onClick={playFollowupQuestion}
+                          disabled={followupSpeaking}
+                        >
+                          {followupSpeaking
+                            ? "🔊 Playing…"
+                            : "🔊 Play the question"}
+                        </button>
+                      ) : (
+                        <>
+                          <button
+                            className="btn"
+                            onClick={startAnswer}
+                            disabled={followupSpeaking}
+                          >
+                            Start answering
+                          </button>
+                          {followupPlayCount < MAX_FOLLOWUP_PLAYS && (
+                            <button
+                              className="btn secondary"
+                              onClick={playFollowupQuestion}
+                              disabled={followupSpeaking}
+                            >
+                              {followupSpeaking
+                                ? "🔊 Playing…"
+                                : "🔁 Replay question"}
+                            </button>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="card inner">
+                      <p style={{ marginTop: 0 }}>
+                        Your browser cannot read the question aloud, so here it
+                        is written instead. There is{" "}
+                        <strong>no preparation time</strong> — answer right
+                        away. You will have up to <strong>2 minutes</strong>.
+                      </p>
+                      <p style={{ marginBottom: 0, fontWeight: 600 }}>
+                        {followupQuestion}
+                      </p>
+                    </div>
+                    <div className="actions">
+                      <button className="btn" onClick={startAnswer}>
+                        Start answering
+                      </button>
+                    </div>
+                  </>
+                )}
               </>
             )}
 
