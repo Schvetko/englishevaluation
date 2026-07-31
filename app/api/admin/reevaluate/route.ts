@@ -2,21 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { listAssessments, saveAssessment } from "@/lib/db";
 import { runEvaluation } from "@/lib/evaluate";
 import { ADMIN_COOKIE, isValidAdminCookie } from "@/lib/auth";
-import type { AssessmentRecord } from "@/lib/types";
+import { hasCurrentRubric } from "@/lib/scoring";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
-
-// A record predates the current 6-category rubric if its stored evaluation
-// is missing a field that only exists in the new shape.
-function needsReevaluation(record: AssessmentRecord): boolean {
-  const evaluation = record.evaluation as unknown;
-  return (
-    !evaluation ||
-    typeof evaluation !== "object" ||
-    !("vocabulary" in evaluation)
-  );
-}
 
 export async function POST(request: NextRequest) {
   if (!isValidAdminCookie(request.cookies.get(ADMIN_COOKIE)?.value)) {
@@ -31,7 +20,7 @@ export async function POST(request: NextRequest) {
   }
 
   const all = await listAssessments();
-  const stale = all.filter(needsReevaluation);
+  const stale = all.filter((record) => !hasCurrentRubric(record.evaluation));
 
   if (stale.length === 0) {
     return NextResponse.json({ updated: 0, failed: [] });

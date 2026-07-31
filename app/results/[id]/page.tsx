@@ -10,6 +10,7 @@ import {
   TOTAL_SCORE_MAX,
   autoScoreTotal,
   getScoreBand,
+  hasCurrentRubric,
 } from "@/lib/scoring";
 import PronunciationEditor from "./PronunciationEditor";
 
@@ -40,33 +41,42 @@ export default async function ResultPage({
   const record = await getAssessment(id);
   if (!record) notFound();
 
-  const e = record.evaluation;
   const hasFollowup = Boolean(record.followupQuestion);
-  const autoTotal = autoScoreTotal(e);
+  const legacy = !hasCurrentRubric(record.evaluation);
+  const e = legacy ? null : record.evaluation;
+  const autoTotal = e ? autoScoreTotal(e) : null;
   const pronunciationScore = record.pronunciationScore ?? null;
   const grandTotal =
-    pronunciationScore !== null ? autoTotal + pronunciationScore : null;
+    autoTotal !== null && pronunciationScore !== null
+      ? autoTotal + pronunciationScore
+      : null;
   const band = grandTotal !== null ? getScoreBand(grandTotal) : null;
 
   const rows: Array<{
     key: keyof typeof CRITERIA_LABELS;
     score: number;
     comment: string;
-  }> = [
-    { key: "grammar", score: e.grammar.score, comment: e.grammar.comment },
-    { key: "vocabulary", score: e.vocabulary.score, comment: e.vocabulary.comment },
-    { key: "fluency", score: e.fluency.score, comment: e.fluency.comment },
-    {
-      key: "listening_comprehension",
-      score: e.listening_comprehension.score,
-      comment: e.listening_comprehension.comment,
-    },
-    {
-      key: "communication_skills",
-      score: e.communication_skills.score,
-      comment: e.communication_skills.comment,
-    },
-  ];
+  }> = e
+    ? [
+        { key: "grammar", score: e.grammar.score, comment: e.grammar.comment },
+        {
+          key: "vocabulary",
+          score: e.vocabulary.score,
+          comment: e.vocabulary.comment,
+        },
+        { key: "fluency", score: e.fluency.score, comment: e.fluency.comment },
+        {
+          key: "listening_comprehension",
+          score: e.listening_comprehension.score,
+          comment: e.listening_comprehension.comment,
+        },
+        {
+          key: "communication_skills",
+          score: e.communication_skills.score,
+          comment: e.communication_skills.comment,
+        },
+      ]
+    : [];
 
   return (
     <main className="container wide">
@@ -77,7 +87,9 @@ export default async function ResultPage({
             English assessment · {formatDate(record.createdAt)}
           </p>
         </div>
-        {band ? (
+        {legacy ? (
+          <span className="badge needs_support">Legacy format</span>
+        ) : band ? (
           <span className="badge independent">
             {grandTotal}/{TOTAL_SCORE_MAX} · {band.label}
           </span>
@@ -88,85 +100,107 @@ export default async function ResultPage({
         )}
       </div>
 
-      <div className="card">
-        <h2>Scorecard</h2>
-        <div style={{ overflowX: "auto" }}>
-          <table className="admin-table">
-            <thead>
-              <tr>
-                <th>Category</th>
-                <th>What to assess</th>
-                <th>Score</th>
-                <th>Comments</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => (
-                <tr key={row.key}>
-                  <td style={{ whiteSpace: "nowrap", fontWeight: 600 }}>
-                    {CRITERIA_LABELS[row.key]}
-                  </td>
-                  <td className="muted small">
-                    {CRITERIA_DESCRIPTIONS[row.key]}
-                  </td>
-                  <td style={{ whiteSpace: "nowrap" }}>{row.score}/5</td>
-                  <td className="small">{row.comment}</td>
-                </tr>
-              ))}
-              <tr>
-                <td style={{ whiteSpace: "nowrap", fontWeight: 600 }}>
-                  {CRITERIA_LABELS.pronunciation}
-                </td>
-                <td className="muted small">
-                  {CRITERIA_DESCRIPTIONS.pronunciation}
-                </td>
-                <td>
-                  <PronunciationEditor
-                    assessmentId={record.id}
-                    initialScore={pronunciationScore}
-                  />
-                </td>
-                <td className="muted small">
-                  Not scored automatically — the API has no audio input.
-                  Watch the video below and rate it yourself.
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-
-        {band && (
-          <p className="muted small" style={{ marginTop: 14, marginBottom: 0 }}>
-            <strong>
-              {grandTotal}/{TOTAL_SCORE_MAX} — {band.label}:
-            </strong>{" "}
-            {band.description}
+      {legacy ? (
+        <div className="card">
+          <h2>Scored with an older rubric</h2>
+          <p className="muted" style={{ marginBottom: 0 }}>
+            This assessment predates the current 6-category scorecard, so its
+            scores aren&apos;t shown here. Go to{" "}
+            <Link href="/admin">/admin</Link> and click{" "}
+            <strong>&quot;Re-evaluate old assessments&quot;</strong> to
+            re-score it from the saved transcripts below.
           </p>
-        )}
+        </div>
+      ) : (
+        e && (
+          <div className="card">
+            <h2>Scorecard</h2>
+            <div style={{ overflowX: "auto" }}>
+              <table className="admin-table">
+                <thead>
+                  <tr>
+                    <th>Category</th>
+                    <th>What to assess</th>
+                    <th>Score</th>
+                    <th>Comments</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((row) => (
+                    <tr key={row.key}>
+                      <td style={{ whiteSpace: "nowrap", fontWeight: 600 }}>
+                        {CRITERIA_LABELS[row.key]}
+                      </td>
+                      <td className="muted small">
+                        {CRITERIA_DESCRIPTIONS[row.key]}
+                      </td>
+                      <td style={{ whiteSpace: "nowrap" }}>{row.score}/5</td>
+                      <td className="small">{row.comment}</td>
+                    </tr>
+                  ))}
+                  <tr>
+                    <td style={{ whiteSpace: "nowrap", fontWeight: 600 }}>
+                      {CRITERIA_LABELS.pronunciation}
+                    </td>
+                    <td className="muted small">
+                      {CRITERIA_DESCRIPTIONS.pronunciation}
+                    </td>
+                    <td>
+                      <PronunciationEditor
+                        assessmentId={record.id}
+                        initialScore={pronunciationScore}
+                      />
+                    </td>
+                    <td className="muted small">
+                      Not scored automatically — the API has no audio input.
+                      Watch the video below and rate it yourself.
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
 
-        {e.grammar.examples.length > 0 && (
-          <>
-            <h2 style={{ marginTop: 20 }}>Grammar examples</h2>
-            {e.grammar.examples.map((ex, i) => (
-              <div key={i} style={{ marginBottom: 8 }}>
-                <blockquote className="reform">“{ex.original}”</blockquote>
-                <blockquote className="reform improved">
-                  “{ex.correction}”
-                </blockquote>
-              </div>
+            {band && (
+              <p
+                className="muted small"
+                style={{ marginTop: 14, marginBottom: 0 }}
+              >
+                <strong>
+                  {grandTotal}/{TOTAL_SCORE_MAX} — {band.label}:
+                </strong>{" "}
+                {band.description}
+              </p>
+            )}
+
+            {e.grammar.examples.length > 0 && (
+              <>
+                <h2 style={{ marginTop: 20 }}>Grammar examples</h2>
+                {e.grammar.examples.map((ex, i) => (
+                  <div key={i} style={{ marginBottom: 8 }}>
+                    <blockquote className="reform">
+                      “{ex.original}”
+                    </blockquote>
+                    <blockquote className="reform improved">
+                      “{ex.correction}”
+                    </blockquote>
+                  </div>
+                ))}
+              </>
+            )}
+          </div>
+        )
+      )}
+
+      {!legacy && e && (
+        <div className="card">
+          <h2>Observations</h2>
+          <ul className="clean" style={{ marginBottom: 0 }}>
+            {e.observations.map((obs, i) => (
+              <li key={i}>{obs}</li>
             ))}
-          </>
-        )}
-      </div>
-
-      <div className="card">
-        <h2>Observations</h2>
-        <ul className="clean" style={{ marginBottom: 0 }}>
-          {e.observations.map((obs, i) => (
-            <li key={i}>{obs}</li>
-          ))}
-        </ul>
-      </div>
+          </ul>
+        </div>
+      )}
 
       {record.videoUrls.length > 0 && (
         <div className="card">

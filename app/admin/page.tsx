@@ -2,7 +2,12 @@ import Link from "next/link";
 import { cookies } from "next/headers";
 import { listAssessments } from "@/lib/db";
 import { ADMIN_COOKIE, isValidAdminCookie } from "@/lib/auth";
-import { AUTO_SCORE_MAX, autoScoreTotal, getScoreBand } from "@/lib/scoring";
+import {
+  AUTO_SCORE_MAX,
+  autoScoreTotal,
+  getScoreBand,
+  hasCurrentRubric,
+} from "@/lib/scoring";
 import ReevaluateButton from "./ReevaluateButton";
 
 export const dynamic = "force-dynamic";
@@ -99,9 +104,10 @@ export default async function AdminPage({
             </thead>
             <tbody>
               {assessments.map((a) => {
-                const autoTotal = autoScoreTotal(a.evaluation);
+                const legacy = !hasCurrentRubric(a.evaluation);
+                const autoTotal = legacy ? null : autoScoreTotal(a.evaluation);
                 const total =
-                  a.pronunciationScore !== null
+                  autoTotal !== null && a.pronunciationScore !== null
                     ? autoTotal + a.pronunciationScore
                     : null;
                 const band = total !== null ? getScoreBand(total) : null;
@@ -110,7 +116,11 @@ export default async function AdminPage({
                     <td>{a.candidateName}</td>
                     <td className="muted">{formatDate(a.createdAt)}</td>
                     <td>
-                      {band ? (
+                      {legacy ? (
+                        <span className="badge needs_support">
+                          Legacy format
+                        </span>
+                      ) : band ? (
                         <span className="badge independent">
                           {total}/30 · {band.label}
                         </span>

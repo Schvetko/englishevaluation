@@ -53,14 +53,30 @@ export function getScoreBand(total: number): ScoreBand {
   );
 }
 
+/**
+ * True if a stored evaluation matches the current 6-category rubric.
+ * Older assessments (scored before this rubric existed) are missing these
+ * fields — checking this before reading `.score` off them avoids a crash on
+ * "Cannot read properties of undefined".
+ */
+export function hasCurrentRubric(e: unknown): e is Evaluation {
+  return (
+    Boolean(e) &&
+    typeof e === "object" &&
+    "vocabulary" in (e as object) &&
+    "listening_comprehension" in (e as object) &&
+    "communication_skills" in (e as object)
+  );
+}
+
 /** Sum of the 5 model-scored categories — max 25 of the 30-point scale. */
 export function autoScoreTotal(e: Evaluation): number {
   return (
-    e.grammar.score +
-    e.vocabulary.score +
-    e.fluency.score +
-    e.listening_comprehension.score +
-    e.communication_skills.score
+    (e.grammar?.score ?? 0) +
+    (e.vocabulary?.score ?? 0) +
+    (e.fluency?.score ?? 0) +
+    (e.listening_comprehension?.score ?? 0) +
+    (e.communication_skills?.score ?? 0)
   );
 }
 
