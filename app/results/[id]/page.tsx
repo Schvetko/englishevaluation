@@ -3,20 +3,17 @@ import { cookies } from "next/headers";
 import { notFound, redirect } from "next/navigation";
 import { getAssessment } from "@/lib/db";
 import { ADMIN_COOKIE, isValidAdminCookie } from "@/lib/auth";
+import {
+  AUTO_SCORE_MAX,
+  CRITERIA_DESCRIPTIONS,
+  CRITERIA_LABELS,
+  TOTAL_SCORE_MAX,
+  autoScoreTotal,
+  getScoreBand,
+} from "@/lib/scoring";
+import PronunciationEditor from "./PronunciationEditor";
 
 export const dynamic = "force-dynamic";
-
-const BAND_LABELS: Record<string, string> = {
-  independent: "Independent",
-  supported: "Supported",
-  needs_support: "Needs support",
-};
-
-const GAP_LABELS: Record<string, string> = {
-  none: "No noticeable gap",
-  moderate: "Moderate gap",
-  significant: "Significant gap",
-};
 
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleString("en-GB", {
@@ -45,9 +42,34 @@ export default async function ResultPage({
 
   const e = record.evaluation;
   const hasFollowup = Boolean(record.followupQuestion);
+  const autoTotal = autoScoreTotal(e);
+  const pronunciationScore = record.pronunciationScore ?? null;
+  const grandTotal =
+    pronunciationScore !== null ? autoTotal + pronunciationScore : null;
+  const band = grandTotal !== null ? getScoreBand(grandTotal) : null;
+
+  const rows: Array<{
+    key: keyof typeof CRITERIA_LABELS;
+    score: number;
+    comment: string;
+  }> = [
+    { key: "grammar", score: e.grammar.score, comment: e.grammar.comment },
+    { key: "vocabulary", score: e.vocabulary.score, comment: e.vocabulary.comment },
+    { key: "fluency", score: e.fluency.score, comment: e.fluency.comment },
+    {
+      key: "listening_comprehension",
+      score: e.listening_comprehension.score,
+      comment: e.listening_comprehension.comment,
+    },
+    {
+      key: "communication_skills",
+      score: e.communication_skills.score,
+      comment: e.communication_skills.comment,
+    },
+  ];
 
   return (
-    <main className="container">
+    <main className="container wide">
       <div className="header-bar">
         <div>
           <h1>{record.candidateName}</h1>
@@ -55,34 +77,76 @@ export default async function ResultPage({
             English assessment · {formatDate(record.createdAt)}
           </p>
         </div>
-        <span className={`badge ${e.overall_band}`}>
-          {BAND_LABELS[e.overall_band] ?? e.overall_band}
-        </span>
+        {band ? (
+          <span className="badge independent">
+            {grandTotal}/{TOTAL_SCORE_MAX} · {band.label}
+          </span>
+        ) : (
+          <span className="badge supported">
+            {autoTotal}/{AUTO_SCORE_MAX} · pending pronunciation
+          </span>
+        )}
       </div>
 
       <div className="card">
-        <h2>Scores</h2>
-        <div className="score-row">
-          <span className="score-value">{e.comprehension.score}/5</span>
-          <span className="score-label">Comprehension</span>
+        <h2>Scorecard</h2>
+        <div style={{ overflowX: "auto" }}>
+          <table className="admin-table">
+            <thead>
+              <tr>
+                <th>Category</th>
+                <th>What to assess</th>
+                <th>Score</th>
+                <th>Comments</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr key={row.key}>
+                  <td style={{ whiteSpace: "nowrap", fontWeight: 600 }}>
+                    {CRITERIA_LABELS[row.key]}
+                  </td>
+                  <td className="muted small">
+                    {CRITERIA_DESCRIPTIONS[row.key]}
+                  </td>
+                  <td style={{ whiteSpace: "nowrap" }}>{row.score}/5</td>
+                  <td className="small">{row.comment}</td>
+                </tr>
+              ))}
+              <tr>
+                <td style={{ whiteSpace: "nowrap", fontWeight: 600 }}>
+                  {CRITERIA_LABELS.pronunciation}
+                </td>
+                <td className="muted small">
+                  {CRITERIA_DESCRIPTIONS.pronunciation}
+                </td>
+                <td>
+                  <PronunciationEditor
+                    assessmentId={record.id}
+                    initialScore={pronunciationScore}
+                  />
+                </td>
+                <td className="muted small">
+                  Not scored automatically — the API has no audio input.
+                  Watch the video below and rate it yourself.
+                </td>
+              </tr>
+            </tbody>
+          </table>
         </div>
-        <p className="muted small">{e.comprehension.comment}</p>
 
-        <div className="score-row">
-          <span className="score-value">{e.fluency.score}/5</span>
-          <span className="score-label">Production / fluency</span>
-        </div>
-        <p className="muted small">{e.fluency.comment}</p>
+        {band && (
+          <p className="muted small" style={{ marginTop: 14, marginBottom: 0 }}>
+            <strong>
+              {grandTotal}/{TOTAL_SCORE_MAX} — {band.label}:
+            </strong>{" "}
+            {band.description}
+          </p>
+        )}
 
-        <div className="score-row">
-          <span className="score-value">{e.grammar.score}/5</span>
-          <span className="score-label">Grammar</span>
-        </div>
-        <p className="muted small" style={{ marginBottom: e.grammar.examples.length ? 8 : undefined }}>
-          {e.grammar.comment}
-        </p>
         {e.grammar.examples.length > 0 && (
-          <div style={{ marginBottom: 4 }}>
+          <>
+            <h2 style={{ marginTop: 20 }}>Grammar examples</h2>
             {e.grammar.examples.map((ex, i) => (
               <div key={i} style={{ marginBottom: 8 }}>
                 <blockquote className="reform">“{ex.original}”</blockquote>
@@ -91,41 +155,8 @@ export default async function ResultPage({
                 </blockquote>
               </div>
             ))}
-          </div>
+          </>
         )}
-
-        <div className="score-row">
-          <span className="score-value">{e.technical_vocabulary.score}/5</span>
-          <span className="score-label">
-            Technical vocabulary <span className="muted">(question 1)</span>
-          </span>
-        </div>
-        <p className="muted small">{e.technical_vocabulary.comment}</p>
-
-        <div className="score-row">
-          <span className="score-value">
-            {e.spontaneous_followup ? `${e.spontaneous_followup.score}/5` : "—"}
-          </span>
-          <span className="score-label">
-            Spontaneous response <span className="muted">(unscripted follow-up)</span>
-          </span>
-        </div>
-        <p className="muted small">
-          {e.spontaneous_followup
-            ? e.spontaneous_followup.comment
-            : "No follow-up question was asked in this session."}
-        </p>
-
-        <div className="score-row">
-          <span className="score-value" style={{ fontSize: "1rem" }}>
-            {GAP_LABELS[e.everyday_technical_gap.gap] ??
-              e.everyday_technical_gap.gap}
-          </span>
-          <span className="score-label">Everyday vs technical gap</span>
-        </div>
-        <p className="muted small" style={{ marginBottom: 0 }}>
-          {e.everyday_technical_gap.comment}
-        </p>
       </div>
 
       <div className="card">
@@ -165,7 +196,12 @@ export default async function ResultPage({
         {hasFollowup && (
           <>
             <p className="small" style={{ marginBottom: 4 }}>
-              <strong>Unscripted follow-up:</strong>{" "}
+              <strong>Unscripted follow-up</strong>{" "}
+              <span className="muted">
+                (spoken to the candidate, not shown as text
+                {record.followupReplayed ? " — candidate used a replay" : ""}
+                ):
+              </span>{" "}
               <span className="muted">{record.followupQuestion}</span>
             </p>
             <div className="transcript-box" style={{ marginBottom: 18 }}>

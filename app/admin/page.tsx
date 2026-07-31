@@ -2,14 +2,9 @@ import Link from "next/link";
 import { cookies } from "next/headers";
 import { listAssessments } from "@/lib/db";
 import { ADMIN_COOKIE, isValidAdminCookie } from "@/lib/auth";
+import { AUTO_SCORE_MAX, autoScoreTotal, getScoreBand } from "@/lib/scoring";
 
 export const dynamic = "force-dynamic";
-
-const BAND_LABELS: Record<string, string> = {
-  independent: "Independent",
-  supported: "Supported",
-  needs_support: "Needs support",
-};
 
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleString("en-GB", {
@@ -86,30 +81,45 @@ export default async function AdminPage({
               <tr>
                 <th>Candidate</th>
                 <th>Date</th>
-                <th>Band</th>
+                <th>Score</th>
                 <th>Video</th>
                 <th></th>
               </tr>
             </thead>
             <tbody>
-              {assessments.map((a) => (
-                <tr key={a.id}>
-                  <td>{a.candidateName}</td>
-                  <td className="muted">{formatDate(a.createdAt)}</td>
-                  <td>
-                    <span className={`badge ${a.evaluation.overall_band}`}>
-                      {BAND_LABELS[a.evaluation.overall_band] ??
-                        a.evaluation.overall_band}
-                    </span>
-                  </td>
-                  <td className="muted small">
-                    {a.videoUrls.length > 0 ? `${a.videoUrls.length} file(s)` : "—"}
-                  </td>
-                  <td>
-                    <Link href={`/results/${a.id}`}>Details →</Link>
-                  </td>
-                </tr>
-              ))}
+              {assessments.map((a) => {
+                const autoTotal = autoScoreTotal(a.evaluation);
+                const total =
+                  a.pronunciationScore !== null
+                    ? autoTotal + a.pronunciationScore
+                    : null;
+                const band = total !== null ? getScoreBand(total) : null;
+                return (
+                  <tr key={a.id}>
+                    <td>{a.candidateName}</td>
+                    <td className="muted">{formatDate(a.createdAt)}</td>
+                    <td>
+                      {band ? (
+                        <span className="badge independent">
+                          {total}/30 · {band.label}
+                        </span>
+                      ) : (
+                        <span className="badge supported">
+                          {autoTotal}/{AUTO_SCORE_MAX} · pending
+                        </span>
+                      )}
+                    </td>
+                    <td className="muted small">
+                      {a.videoUrls.length > 0
+                        ? `${a.videoUrls.length} file(s)`
+                        : "—"}
+                    </td>
+                    <td>
+                      <Link href={`/results/${a.id}`}>Details →</Link>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}

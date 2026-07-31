@@ -487,6 +487,7 @@ export default function AssessmentPage() {
           followupQuestion: followupQuestion || undefined,
           followupTranscript: answers.followup.transcript || undefined,
           followupDurationSeconds: answers.followup.durationSeconds,
+          followupReplayed: followupPlayCount > 1,
           videoUrls,
         }),
       });
@@ -499,7 +500,14 @@ export default function AssessmentPage() {
       setSubmitError(err instanceof Error ? err.message : "Submission failed");
       setPhase("name");
     }
-  }, [answers, firstName, lastName, questions, followupQuestion]);
+  }, [
+    answers,
+    firstName,
+    lastName,
+    questions,
+    followupQuestion,
+    followupPlayCount,
+  ]);
 
   if (!questions) {
     return (

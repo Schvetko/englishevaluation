@@ -20,18 +20,14 @@ const EVALUATION_SCHEMA = {
   type: "object",
   additionalProperties: false,
   required: [
-    "comprehension",
-    "fluency",
     "grammar",
-    "technical_vocabulary",
-    "spontaneous_followup",
-    "everyday_technical_gap",
-    "overall_band",
+    "vocabulary",
+    "fluency",
+    "listening_comprehension",
+    "communication_skills",
     "observations",
   ],
   properties: {
-    comprehension: SCORED_CRITERION,
-    fluency: SCORED_CRITERION,
     grammar: {
       type: "object",
       additionalProperties: false,
@@ -53,40 +49,28 @@ const EVALUATION_SCHEMA = {
         },
       },
     },
-    technical_vocabulary: SCORED_CRITERION,
-    spontaneous_followup: {
-      anyOf: [SCORED_CRITERION, { type: "null" }],
-    },
-    everyday_technical_gap: {
-      type: "object",
-      additionalProperties: false,
-      required: ["gap", "comment"],
-      properties: {
-        gap: { type: "string", enum: ["none", "moderate", "significant"] },
-        comment: { type: "string" },
-      },
-    },
-    overall_band: {
-      type: "string",
-      enum: ["independent", "supported", "needs_support"],
-    },
+    vocabulary: SCORED_CRITERION,
+    fluency: SCORED_CRITERION,
+    listening_comprehension: SCORED_CRITERION,
+    communication_skills: SCORED_CRITERION,
     observations: { type: "array", items: { type: "string" } },
   },
 } as const;
 
-const SYSTEM_PROMPT = `You are an experienced English language assessor specialising in evaluating spoken English of IT professionals for hiring purposes. You receive automatic speech-to-text transcripts of spoken answers, so ignore punctuation/casing issues and obvious transcription artifacts (e.g. a dropped article or verb ending, words merged or split oddly, a mis-heard homophone) — these are recognition noise, not the candidate's grammar. Only count an error as a grammar mistake if it reflects the candidate's actual language production, not a plausible transcription slip.
+const SYSTEM_PROMPT = `You are an experienced English language assessor specialising in evaluating spoken English of IT professionals for hiring purposes. You receive automatic speech-to-text transcripts of spoken answers, so ignore punctuation/casing issues and obvious transcription artifacts (e.g. a dropped article or verb ending, words merged or split oddly, a mis-heard homophone) — these are recognition noise, not the candidate's language ability. Only count something as a real mistake if it reflects the candidate's actual language production, not a plausible transcription slip.
 
-Evaluate against a workplace-communication rubric:
-- comprehension (1-5): did the candidate understand the question and answer it relevantly and completely?
-- production/fluency (1-5): sentence construction, connected speech, self-correction, hesitation patterns visible in the transcript, range of structures. Do NOT factor grammatical accuracy into this score — that is scored separately below.
-- grammar (1-5): grammatical range and accuracy across BOTH main answers (tense, agreement, articles, word order, prepositions, sentence structure). Score purely on grammar, independent of fluency or vocabulary. In "examples" (0-3 items), quote short real fragments from the transcripts that are genuine grammar mistakes (not transcription artifacts) with a natural corrected version. If there are no real grammar mistakes worth noting, return an empty examples array and say so in the comment.
-- technical_vocabulary (1-5): ONLY based on answer 1 (the technical question) — precision and range of technical/domain vocabulary, ability to explain technical concepts clearly.
-- spontaneous_followup (1-5, or null): the candidate was asked one unscripted follow-up question with no preparation time, testing genuine real-time comprehension and response versus a prepared/rehearsed answer. Score how well they understood the follow-up and responded relevantly and coherently on the spot. Set to null (not 1) ONLY if no follow-up question/answer was provided at all — if a follow-up was asked but the candidate answered poorly, empty, or off-topic, score it low (1-2) rather than null.
-- everyday_technical_gap: compare fluency/complexity between answer 2 (everyday topic) and answer 1 (technical topic). "none" = comparable quality; "moderate" = noticeably weaker on technical content; "significant" = the candidate is markedly less capable on technical content than in general conversation (or vice versa — note the direction in the comment).
-- overall_band: "independent" = can work in an English-speaking team without language support; "supported" = can work but will need occasional help/patience (e.g. in meetings); "needs_support" = language is currently a blocker for team communication. Weigh the spontaneous follow-up response heavily here — it is the strongest signal of real unscripted ability.
+You are told whether the candidate needed to replay the unscripted follow-up question before answering it (this is a concrete listening-comprehension signal, similar to asking someone to repeat themselves on a real call).
+
+Score against this rubric — each category is 1-5, evaluated independently of the others (do not let a weakness in one category pull down the score of another):
+
+- grammar (1-5): Uses correct tenses, sentence structure, and grammar with minimal mistakes. Score purely on grammatical accuracy and range, not on vocabulary, fluency, or pronunciation. In "examples" (0-3 items), quote short real fragments from the transcripts that are genuine grammar mistakes (not transcription artifacts) with a natural corrected version. If there are no real grammar mistakes worth noting, return an empty examples array and say so in the comment.
+- vocabulary (1-5): Uses appropriate general and job-related (technical) vocabulary. Can express ideas without excessive word searching or over-reliance on basic/vague words. Weigh the technical answer (question 1) and the follow-up heavily here, since they reveal job-related vocabulary specifically; also note in the comment if there is a noticeable gap between everyday vocabulary (question 2) and technical vocabulary (question 1 / follow-up).
+- fluency (1-5): Speaks naturally with minimal hesitation and maintains the flow of the answer — sentence construction, connected speech, self-correction and hesitation patterns visible in the transcript, range of structures.
+- listening_comprehension (1-5): Understands questions without frequent repetition or clarification. Weigh the unscripted follow-up heavily: if the candidate needed a replay before answering, that is a concrete sign of a comprehension gap and should generally cap this score at 3 or below unless the rest of the evidence strongly compensates; if they answered the follow-up correctly on the first listen, that is strong positive evidence.
+- communication_skills (1-5): Gives complete answers, explains ideas clearly, asks clarifying questions when appropriate, and keeps the conversation going rather than giving minimal one-line answers.
 - observations: 2-3 specific, concrete remarks citing actual phrases from the transcripts (strengths and weaknesses), distinct from the grammar examples.
 
-If an answer is empty or extremely short, score the affected criteria 1 and say so plainly. Write all comments in English, concise and specific.`;
+If an answer is empty or extremely short, score the affected categories 1 and say so plainly. Write all comments in English, concise and specific. Do not invent a "pronunciation" score or mention pronunciation at all — that is assessed separately by a human from the video, not from this transcript.`;
 
 interface EvaluateRequestBody {
   candidateName: string;
@@ -99,6 +83,7 @@ interface EvaluateRequestBody {
   followupQuestion?: string;
   followupTranscript?: string;
   followupDurationSeconds?: number;
+  followupReplayed?: boolean;
   videoUrls?: string[];
 }
 
@@ -144,8 +129,12 @@ export async function POST(request: NextRequest) {
     "",
     ...(hasFollowup
       ? [
-          "=== UNSCRIPTED FOLLOW-UP QUESTION (asked immediately after answer 1, no preparation time) ===",
+          "=== UNSCRIPTED FOLLOW-UP QUESTION (spoken to the candidate immediately after answer 1, no preparation time) ===",
           body.followupQuestion,
+          "",
+          `=== Did the candidate need to replay the follow-up question before answering? ${
+            body.followupReplayed ? "YES — they used a replay" : "NO — answered after hearing it once"
+          } ===`,
           "",
           "=== FOLLOW-UP ANSWER (speech-to-text transcript) ===",
           body.followupTranscript?.trim() || "(empty answer)",
@@ -211,8 +200,10 @@ export async function POST(request: NextRequest) {
     followupQuestion: body.followupQuestion || "",
     followupTranscript: body.followupTranscript || "",
     followupDurationSeconds: body.followupDurationSeconds ?? 0,
+    followupReplayed: Boolean(body.followupReplayed),
     videoUrls: Array.isArray(body.videoUrls) ? body.videoUrls : [],
     evaluation,
+    pronunciationScore: null,
   };
 
   try {
@@ -242,7 +233,6 @@ export async function POST(request: NextRequest) {
         candidateName: record.candidateName,
         assessmentId: record.id,
         resultUrl: `${origin}/results/${record.id}`,
-        band: record.evaluation.overall_band,
         videoUrls: record.videoUrls,
         createdAt: record.createdAt,
       }),

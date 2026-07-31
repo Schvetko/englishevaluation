@@ -37,6 +37,17 @@ export async function getAssessment(
   return typeof raw === "string" ? (JSON.parse(raw) as AssessmentRecord) : raw;
 }
 
+export async function setPronunciationScore(
+  id: string,
+  score: 1 | 2 | 3 | 4 | 5 | null,
+): Promise<AssessmentRecord | null> {
+  const record = await getAssessment(id);
+  if (!record) return null;
+  const updated: AssessmentRecord = { ...record, pronunciationScore: score };
+  await saveAssessment(updated);
+  return updated;
+}
+
 export async function listAssessments(): Promise<AssessmentRecord[]> {
   const redis = getRedis();
   if (!redis) return [];

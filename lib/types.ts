@@ -1,5 +1,7 @@
+export type Score1to5 = 1 | 2 | 3 | 4 | 5;
+
 export interface ScoredCriterion {
-  score: 1 | 2 | 3 | 4 | 5;
+  score: Score1to5;
   comment: string;
 }
 
@@ -12,17 +14,18 @@ export interface GrammarAssessment extends ScoredCriterion {
   examples: GrammarExample[];
 }
 
+/**
+ * Automatically scored by the model from the transcripts (max 25 points).
+ * Pronunciation is scored separately by the hiring team after watching the
+ * candidate's video — the Anthropic API has no audio input, so it cannot be
+ * judged from a text transcript.
+ */
 export interface Evaluation {
-  comprehension: ScoredCriterion;
-  fluency: ScoredCriterion;
   grammar: GrammarAssessment;
-  technical_vocabulary: ScoredCriterion;
-  spontaneous_followup: ScoredCriterion | null;
-  everyday_technical_gap: {
-    gap: "none" | "moderate" | "significant";
-    comment: string;
-  };
-  overall_band: "independent" | "supported" | "needs_support";
+  vocabulary: ScoredCriterion;
+  fluency: ScoredCriterion;
+  listening_comprehension: ScoredCriterion;
+  communication_skills: ScoredCriterion;
   observations: string[];
 }
 
@@ -39,6 +42,9 @@ export interface AssessmentRecord {
   followupQuestion: string;
   followupTranscript: string;
   followupDurationSeconds: number;
+  followupReplayed: boolean;
   videoUrls: string[];
   evaluation: Evaluation;
+  /** 1-5, filled in by the hiring team in /admin after watching the video. */
+  pronunciationScore: Score1to5 | null;
 }
