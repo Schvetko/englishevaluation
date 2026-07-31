@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { listAssessments } from "@/lib/db";
 import { ADMIN_COOKIE, isValidAdminCookie } from "@/lib/auth";
 import { AUTO_SCORE_MAX, autoScoreTotal, getScoreBand } from "@/lib/scoring";
+import ReevaluateButton from "./ReevaluateButton";
 
 export const dynamic = "force-dynamic";
 
@@ -69,6 +70,16 @@ export default async function AdminPage({
         <h1>Assessments</h1>
         <span className="muted small">{assessments.length} total</span>
       </div>
+      {assessments.length > 0 && (
+        <div className="card">
+          <ReevaluateButton />
+          <p className="muted small" style={{ marginTop: 8, marginBottom: 0 }}>
+            Re-runs the current 6-category rubric on any assessment still
+            scored under an older version. Pronunciation scores you've
+            already entered are kept.
+          </p>
+        </div>
+      )}
       <div className="card">
         {assessments.length === 0 ? (
           <p className="muted">
